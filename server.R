@@ -7,10 +7,10 @@ library(pathview)
 shinyServer(function(input, output){
   
   SUMLines_DB <-  dbConnect(RMySQL::MySQL(),
-                            username = [USERNAME],
-                            password = [PASSWORD],
-                            host = [INSTANCE IP],
-                            port = [PORT],
+                            username = "root",
+                            password = "sumlines",
+                            host = "35.190.141.134",
+                            port = 3306,
                             dbname = "SUMLines_DB"
   )
   tables = dbListTables(SUMLines_DB)
@@ -39,13 +39,21 @@ shinyServer(function(input, output){
     rs.data = dbSendQuery(SUMLines_DB, paste0('select ids,quantlog from ', input$sumline, '_CellectaData'))
     df.data = fetch(rs.data, n=-1)
     dbClearResult(dbListResults(SUMLines_DB)[[1]])
-    rs.mut = dbSendQuery(SUMLines_DB, paste0('select * from ', input$sumline, '_Mut_COSMIC'))
+    rs.mut = dbSendQuery(SUMLines_DB, paste0('select gene from ', input$sumline, '_Mut_COSMIC'))
     df.mut = fetch(rs.mut, n=-1)
     df.data$COSMIC = df.data[,2]
-    df.data$COSMIC[df.data[,1] %in% df.mut[,2]] = NA
+    
+    cutoff = quantile(df.data[,2])[4] + 1.5*IQR(df.data[,2])
+    
+    df.data$COSMIC[df.data[,1] %in% df.mut[,1]] = -1*cutoff
     
     head(df.data)
-    df.mat = as.matrix(df.data[,2:3]/max(df.data[,2]))
+    df.mat = as.matrix(df.data[,2:3])
+    
+    df.mat[df.mat[,1] > cutoff] = cutoff
+    df.mat[df.mat[,2] > cutoff] = cutoff
+    df.mat[,1] = df.mat[,1]/cutoff
+    df.mat[,2] = df.mat[,2]/cutoff
     
     rownames(df.mat) = id2eg(df.data[,1])[,2]
     colnames(df.mat) = c("QuantLog", "COSMIC")
