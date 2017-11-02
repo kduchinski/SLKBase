@@ -2,7 +2,7 @@ library(shiny)
 library(DBI)
 library(dplyr)
 library(pathview)
-
+library(org.Hs.eg.db)
 
 shinyServer(function(input, output){
   
@@ -25,7 +25,7 @@ shinyServer(function(input, output){
   sumLineList = c("SUM149", "SUM185", "SUM190", "SUM225", "SUM229", "SUM44", "SUM52")
   
   output$sumlineSelect <- renderUI({
-    selectInput("sumline", "Cell line:", choices = sumLineList, selected = sumLineList[1])
+    selectInput("sumline", "Cell line:", choices = sumLineList)
   })
   output$pathway <- renderImage({
     if(is.null(input$sumline)){return(NULL)}
@@ -39,17 +39,15 @@ shinyServer(function(input, output){
     )
     on.exit(dbDisconnect(SUMLines_DB))
     
-    rs.fc = dbSendQuery(SUMLines_DB, paste0('select Symbol,', input$sumline, ' from ExpressionDataSUMLinesAllGenes'))
+    rs.fc = dbSendQuery(SUMLines_DB, paste0('select Symbol,', input$sumline, ',EntrezId from ExpressionDataSUMLinesAllGenes'))
     df.fc = fetch(rs.fc, n=-1)
     dbClearResult(dbListResults(SUMLines_DB)[[1]])
     
     
     if(input$enrich == "Gene Expression"){
-      # rs.fc = dbSendQuery(SUMLines_DB, paste0('select Symbol,', input$sumline, ' from ExpressionDataSUMLinesAllGenes'))
-      # df.fc = fetch(rs.fc, n=-1)
-      # dbClearResult(dbListResults(SUMLines_DB)[[1]])
       df.data = df.fc[(df.fc[,2] > 1 | df.fc[,2] < -1),]
       cutoff = ceiling(max(df.data[,2]))
+      rownames(df.data) = as.character(seq(1, nrow(df.data)))
     }else{
       rs.mut = dbSendQuery(SUMLines_DB, paste0('select gene from ', input$sumline, '_Mut_COSMIC'))
       df.mut = fetch(rs.mut, n=-1)
@@ -59,7 +57,10 @@ shinyServer(function(input, output){
       dbClearResult(dbListResults(SUMLines_DB)[[1]])
       
       df.overexp = df.fc[df.fc[,2] > 1, 1]
-      rs.data = dbSendQuery(SUMLines_DB, paste0('select ids,quantlog from ', input$sumline, '_CellectaData where quantloghit = 1'))
+      rs.data = dbSendQuery(SUMLines_DB, paste0('select ', input$sumline, '_CellectaData.ids,', input$sumline, 
+                                                '_CellectaData.quantlog,ExpressionDataSUMLinesAllGenes.EntrezId from ', input$sumline, 
+                                                '_CellectaData left join ExpressionDataSUMLinesAllGenes on ', input$sumline, 
+                                                '_CellectaData.ids = ExpressionDataSUMLinesAllGenes.Symbol where quantloghit = 1'))
       df.data = fetch(rs.data, n=-1)
       dbClearResult(dbListResults(SUMLines_DB)[[1]])
       if(input$sumline == "SUM185"){ cutoff = max(df.data[,2])}
@@ -74,14 +75,19 @@ shinyServer(function(input, output){
     df.data$Overexpressed = df.data[,2]
     
     if(input$enrich == "shRNA Screen"){
-    df.data$Mutated[df.data[,1] %in% df.mut[,1]] = -1*cutoff
-    df.data$Amplified[df.data[,1] %in% df.amp[,1]] = 0
-    df.data$Overexpressed[df.data[,1] %in% df.overexp] = NA
+      df.data$Mutated[df.data[,1] %in% df.mut[,1]] = -1*cutoff
+      df.data$Amplified[df.data[,1] %in% df.amp[,1]] = 0
+      df.data$Overexpressed[df.data[,1] %in% df.overexp] = NA
+      
+      rows.noID = as.numeric(rownames(df.data[is.na(df.data$EntrezId) & df.data[,1] != "",]))
+      try.match = pathview::id2eg(df.data[rows.noID,1])[,2]
+      df.data[rows.noID,3] = try.match
     }
     
-    df.mat = as.matrix(df.data[,-1])
+    df.mat = as.matrix(df.data[,-c(1,3)])
     
-    rownames(df.mat) = id2eg(df.data[,1])[,2]
+    
+    rownames(df.mat) = as.character(df.data[,3])
     
     keggID = strsplit(input$pathway, '_')[[1]][2]
     outfile <- paste0("./hsa", keggID, ".pathview.multi.png")
@@ -134,5 +140,40 @@ shinyServer(function(input, output){
     }
     df
   }, options = c(paging = F, searching = F))
+  
+  output$pathwayGenes <- renderDataTable({
+    if(is.null(input$sumline)){return(NULL)}
+    SUMLines_DB <-  dbConnect(RMySQL::MySQL(),
+                              username = "root",
+                              password = "sumlines",
+                              host = "35.190.141.134",
+                              port = 3306,
+                              dbname = "SUMLines_DB"
+    )
+    on.exit(dbDisconnect(SUMLines_DB))
+    kegg = org.Hs.egPATH2EG
+    mapped = mappedkeys(kegg)
+    kegg2 = as.list(kegg[mapped])
+    genes = unlist(kegg2[strsplit(input$pathway, '_')[[1]][2]])
+    if(is.null(genes)){return(NULL)}
+    rs = dbSendQuery(SUMLines_DB, paste0('select ids,EntrezId,quantlog,quantlogrank,`DNA Amp.`,', input$sumline,
+                                         ',geneMutation,Occurences_in_COSMIC from ', input$sumline,
+                                         '_CellectaData left join ExpressionDataSUMLinesAllGenes on ', input$sumline,
+                                         '_CellectaData.ids = ExpressionDataSUMLinesAllGenes.Symbol left join ', input$sumline,
+                                         '_amplificationData on ids = ', input$sumline, '_amplificationData.Symbol left join ',
+                                         input$sumline, '_Mut_COSMIC on ', input$sumline, '_CellectaData.ids = ', input$sumline,
+                                         '_Mut_COSMIC.gene where quantloghit = 1'))
+    df = fetch(rs, n=-1)
+    dbClearResult(dbListResults(SUMLines_DB)[[1]])
+    colnames(df)[6] = "foldChange"
+    
+    rows.noID = as.numeric(rownames(df[is.na(df$EntrezId),]))
+    try.match = id2eg(df[rows.noID,1])[,2]
+    df[rows.noID,2] = try.match
+    df = df[df$EntrezId %in% genes,]
+    df[,-2]
+    #if(nrow(df) == 0){return(NULL)}
+  })
+  
   
 })
