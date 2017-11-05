@@ -160,15 +160,32 @@ shinyServer(function(input, output){
     genes = union(kgml[,1],kgml[,2])
     genes = translateKEGGID2GeneID(genes)
     if(is.null(genes)){return(NULL)}
-    rs = dbSendQuery(SUMLines_DB, paste0('select ids,EntrezId,quantlog,quantlogrank,`DNA Amp.`,', input$sumline,
-                                         ',geneMutation,Occurences_in_COSMIC from ', input$sumline,
-                                         '_CellectaData left join ExpressionDataSUMLinesAllGenes on ', input$sumline,
-                                         '_CellectaData.ids = ExpressionDataSUMLinesAllGenes.Symbol left join ', input$sumline,
-                                         '_amplificationData on ids = ', input$sumline, '_amplificationData.Symbol left join ',
-                                         input$sumline, '_Mut_COSMIC on ', input$sumline, '_CellectaData.ids = ', input$sumline,
-                                         '_Mut_COSMIC.gene where quantloghit = 1'))
-    df = fetch(rs, n=-1)
-    dbClearResult(dbListResults(SUMLines_DB)[[1]])
+    
+    if(input$enrich == "Gene Expression"){
+      rs = dbSendQuery(SUMLines_DB, paste0('select ids,EntrezId,quantlog,quantlogrank,`DNA Amp.`,', input$sumline,
+                                           ',geneMutation,Occurences_in_COSMIC from ', input$sumline,
+                                           '_CellectaData left join ExpressionDataSUMLinesAllGenes on ', input$sumline,
+                                           '_CellectaData.ids = ExpressionDataSUMLinesAllGenes.Symbol left join ', input$sumline,
+                                           '_amplificationData on ids = ', input$sumline, '_amplificationData.Symbol left join ',
+                                           input$sumline, '_Mut_COSMIC on ', input$sumline, '_CellectaData.ids = ', input$sumline,
+                                           '_Mut_COSMIC.gene where (', input$sumline, ' > 1 OR ', input$sumline, ' < -1)'))
+      df = fetch(rs, n=-1)
+      dbClearResult(dbListResults(SUMLines_DB)[[1]])
+    }else{
+      rs = dbSendQuery(SUMLines_DB, paste0('select ids,EntrezId,quantlog,quantlogrank,`DNA Amp.`,', input$sumline,
+                                           ',geneMutation,Occurences_in_COSMIC from ', input$sumline,
+                                           '_CellectaData left join ExpressionDataSUMLinesAllGenes on ', input$sumline,
+                                           '_CellectaData.ids = ExpressionDataSUMLinesAllGenes.Symbol left join ', input$sumline,
+                                           '_amplificationData on ids = ', input$sumline, '_amplificationData.Symbol left join ',
+                                           input$sumline, '_Mut_COSMIC on ', input$sumline, '_CellectaData.ids = ', input$sumline,
+                                           '_Mut_COSMIC.gene where quantloghit = 1'))
+      df = fetch(rs, n=-1)
+      dbClearResult(dbListResults(SUMLines_DB)[[1]])
+    }
+    
+    
+   
+    
     colnames(df)[6] = "foldChange"
     
     rows.noID = as.numeric(rownames(df[is.na(df$EntrezId),]))
