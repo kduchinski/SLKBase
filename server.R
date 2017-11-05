@@ -2,7 +2,8 @@ library(shiny)
 library(DBI)
 library(dplyr)
 library(pathview)
-library(org.Hs.eg.db)
+library(KEGGgraph)
+#library(org.Hs.eg.db)
 
 shinyServer(function(input, output){
   
@@ -143,6 +144,7 @@ shinyServer(function(input, output){
   
   output$pathwayGenes <- renderDataTable({
     if(is.null(input$sumline)){return(NULL)}
+    if(is.null(input$pathway)){return(NULL)}
     SUMLines_DB <-  dbConnect(RMySQL::MySQL(),
                               username = "root",
                               password = "sumlines",
@@ -151,10 +153,12 @@ shinyServer(function(input, output){
                               dbname = "SUMLines_DB"
     )
     on.exit(dbDisconnect(SUMLines_DB))
-    kegg = org.Hs.egPATH2EG
-    mapped = mappedkeys(kegg)
-    kegg2 = as.list(kegg[mapped])
-    genes = unlist(kegg2[strsplit(input$pathway, '_')[[1]][2]])
+    temp = tempfile()
+    keggID = strsplit(input$pathway, '_')[[1]][2]
+    download.file(paste0("http://rest.kegg.jp/get/hsa", keggID, "/kgml"), destfile = temp)
+    kgml = parseKGML2DataFrame(temp)
+    genes = union(kgml[,1],kgml[,2])
+    genes = translateKEGGID2GeneID(genes)
     if(is.null(genes)){return(NULL)}
     rs = dbSendQuery(SUMLines_DB, paste0('select ids,EntrezId,quantlog,quantlogrank,`DNA Amp.`,', input$sumline,
                                          ',geneMutation,Occurences_in_COSMIC from ', input$sumline,
@@ -172,7 +176,6 @@ shinyServer(function(input, output){
     df[rows.noID,2] = try.match
     df = df[df$EntrezId %in% genes,]
     df[,-2]
-    #if(nrow(df) == 0){return(NULL)}
   })
   
   
