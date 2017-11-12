@@ -3,7 +3,7 @@ library(DBI)
 library(dplyr)
 library(pathview)
 library(KEGGgraph)
-#library(org.Hs.eg.db)
+library(org.Hs.eg.db)
 
 shinyServer(function(input, output){
   
@@ -156,10 +156,7 @@ shinyServer(function(input, output){
     temp = tempfile()
     keggID = strsplit(input$pathway, '_')[[1]][2]
     download.file(paste0("http://rest.kegg.jp/get/hsa", keggID, "/kgml"), destfile = temp)
-    kgml = parseKGML2DataFrame(temp)
-    genes = union(kgml[,1],kgml[,2])
-    genes = translateKEGGID2GeneID(genes)
-    if(is.null(genes)){return(NULL)}
+
     
     if(input$enrich == "Gene Expression"){
       rs = dbSendQuery(SUMLines_DB, paste0('select ids,EntrezId,quantlog,quantlogrank,`DNA Amp.`,', input$sumline,
@@ -189,10 +186,28 @@ shinyServer(function(input, output){
     colnames(df)[6] = "foldChange"
     
     rows.noID = as.numeric(rownames(df[is.na(df$EntrezId),]))
-    try.match = id2eg(df[rows.noID,1])[,2]
+    try.match = id2eg(df[rows.noID,1], category = "SYMBOL")[,2]
     df[rows.noID,2] = try.match
-    df = df[df$EntrezId %in% genes,]
-    df[,-2]
+    df = df[!is.na(df$EntrezId) & !duplicated(df$EntrezId),]
+    rownames(df) = df$EntrezId
+
+        
+    node.data = node.info(temp)
+    
+
+    
+    node.type=c("gene","enzyme", "compound", "ortholog")
+    sel.idx=node.data$type %in% node.type
+    nna.idx=!is.na(node.data$x+node.data$y+node.data$width+node.data$height)
+    sel.idx=sel.idx & nna.idx
+    node.data=lapply(node.data, "[", sel.idx)
+    
+    plot.data.gene=node.map(df[,3:4], node.data, node.types="gene", node.sum="sum", entrez.gnodes=FALSE)
+    plot.data.gene=plot.data.gene[plot.data.gene$all.mapped != "",]
+    
+    genes = unlist(strsplit(as.character(plot.data.gene$all.mapped), ","))
+    
+    df[df$EntrezId %in% genes,]
   })
   
   
