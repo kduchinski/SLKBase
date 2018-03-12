@@ -2,7 +2,6 @@ library(shiny)
 library(DBI)
 library(dplyr)
 library(pathview)
-library(KEGGgraph)
 library(org.Hs.eg.db)
 
 shinyServer(function(input, output){
@@ -23,7 +22,7 @@ shinyServer(function(input, output){
   #   sumLineList = append(sumLineList, strsplit(tables[i], '_')[[1]][1])
   #   i = i + 3
   # }
-  sumLineList = c("SUM149", "SUM185", "SUM190", "SUM225", "SUM229", "SUM44", "SUM52")
+  sumLineList = c("SUM149", "SUM185", "SUM190", "SUM225", "SUM229", "SUM44", "SUM52", "SUM159")
   
   output$sumlineSelect <- renderUI({
     selectInput("sumline", "Cell line:", choices = sumLineList)
@@ -47,6 +46,13 @@ shinyServer(function(input, output){
     
     if(input$enrich == "Gene Expression"){
       df.data = df.fc[(df.fc[,2] > 1 | df.fc[,2] < -1),]
+      if(nrow(df.data) == 0){return(
+        list(src = "./www/not_available_message.png",
+             contentType = 'image/png',
+             width = 722,
+             height = 166,
+             alt = "loading...")
+      )}
       cutoff = ceiling(max(df.data[,2]))
       rownames(df.data) = as.character(seq(1, nrow(df.data)))
     }else{
@@ -153,10 +159,6 @@ shinyServer(function(input, output){
                               dbname = "SUMLines_DB"
     )
     on.exit(dbDisconnect(SUMLines_DB))
-    temp = tempfile()
-    keggID = strsplit(input$pathway, '_')[[1]][2]
-    download.file(paste0("http://rest.kegg.jp/get/hsa", keggID, "/kgml"), destfile = temp)
-
     
     if(input$enrich == "Gene Expression"){
       rs = dbSendQuery(SUMLines_DB, paste0('select ids,EntrezId,quantlog,quantlogrank,`DNA Amp.`,', input$sumline,
@@ -166,8 +168,6 @@ shinyServer(function(input, output){
                                            '_amplificationData on ids = ', input$sumline, '_amplificationData.Symbol left join ',
                                            input$sumline, '_Mut_COSMIC on ', input$sumline, '_CellectaData.ids = ', input$sumline,
                                            '_Mut_COSMIC.gene where (', input$sumline, ' > 1 OR ', input$sumline, ' < -1)'))
-      df = fetch(rs, n=-1)
-      dbClearResult(dbListResults(SUMLines_DB)[[1]])
     }else{
       rs = dbSendQuery(SUMLines_DB, paste0('select ids,EntrezId,quantlog,quantlogrank,`DNA Amp.`,', input$sumline,
                                            ',geneMutation,Occurences_in_COSMIC from ', input$sumline,
@@ -176,38 +176,43 @@ shinyServer(function(input, output){
                                            '_amplificationData on ids = ', input$sumline, '_amplificationData.Symbol left join ',
                                            input$sumline, '_Mut_COSMIC on ', input$sumline, '_CellectaData.ids = ', input$sumline,
                                            '_Mut_COSMIC.gene where quantloghit = 1'))
-      df = fetch(rs, n=-1)
-      dbClearResult(dbListResults(SUMLines_DB)[[1]])
     }
     
-    
-   
-    
+    df = fetch(rs, n=-1)
+    dbClearResult(dbListResults(SUMLines_DB)[[1]])
+    df.unmapped = df[is.na(df$EntrezId),]
     colnames(df)[6] = "foldChange"
     
     rows.noID = as.numeric(rownames(df[is.na(df$EntrezId),]))
-    try.match = id2eg(df[rows.noID,1], category = "SYMBOL")[,2]
+    try.match = id2eg(df[rows.noID,1])[,2]
     df[rows.noID,2] = try.match
-    df = df[!is.na(df$EntrezId) & !duplicated(df$EntrezId),]
-    rownames(df) = df$EntrezId
+    
+    keggID = strsplit(input$pathway, '_')[[1]][2]
+    kegg = org.Hs.egPATH2EG
+    mapped = mappedkeys(kegg)
+    kegg2 = as.list(kegg[mapped])
+    genes = unlist(kegg2[keggID])
+    if(is.null(genes)){
+      df = df[!is.na(df$EntrezId) & !duplicated(df$EntrezId),]
+      rownames(df) = df$EntrezId
+      temp = tempfile()
+      download.file(paste0("http://rest.kegg.jp/get/hsa", keggID, "/kgml"), destfile = temp)
+      node.data = node.info(temp)
+      node.type=c("gene","enzyme", "compound", "ortholog")
+      sel.idx=node.data$type %in% node.type
+      nna.idx=!is.na(node.data$x+node.data$y+node.data$width+node.data$height)
+      sel.idx=sel.idx & nna.idx
+      node.data=lapply(node.data, "[", sel.idx)
+      
+      plot.data.gene=node.map(df[,3:4], node.data, node.types="gene", node.sum="sum", entrez.gnodes=FALSE)
+      plot.data.gene=plot.data.gene[plot.data.gene$all.mapped != "",]
+      
+      genes = unlist(strsplit(as.character(plot.data.gene$all.mapped), ","))
+    }
 
-        
-    node.data = node.info(temp)
-    
-
-    
-    node.type=c("gene","enzyme", "compound", "ortholog")
-    sel.idx=node.data$type %in% node.type
-    nna.idx=!is.na(node.data$x+node.data$y+node.data$width+node.data$height)
-    sel.idx=sel.idx & nna.idx
-    node.data=lapply(node.data, "[", sel.idx)
-    
-    plot.data.gene=node.map(df[,3:4], node.data, node.types="gene", node.sum="sum", entrez.gnodes=FALSE)
-    plot.data.gene=plot.data.gene[plot.data.gene$all.mapped != "",]
-    
-    genes = unlist(strsplit(as.character(plot.data.gene$all.mapped), ","))
-    
-    df[df$EntrezId %in% genes,]
+    df = df[df$EntrezId %in% genes,]
+    df[,-2]
+    #if(nrow(df) == 0){return(NULL)}
   })
   
   
